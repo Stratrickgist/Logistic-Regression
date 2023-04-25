@@ -1,0 +1,691 @@
+---
+title: "DANA 4820 - group 6 Project"
+output:
+  pdf_document: default
+  html_notebook: default
+  word_document: default
+---
+
+# Importing the Libraries
+```{r}
+library(tidyverse)
+library(dplyr)
+library(mice) #if needed install this pacakge
+library(tidyverse)
+library(fastDummies)
+library(MASS)
+library(caret)
+library(leaps)
+library(here)
+library(skimr)
+library(janitor)
+library(lubridate)
+library(LaplacesDemon)
+library(WVPlots)
+library(praznik)
+library(standardize)
+library(clusterSim)
+library(dplyr)
+library(reshape2)
+library(caTools)
+library(ggcorrplot)
+library(Metrics)
+library(car)
+library(olsrr)
+library(PerformanceAnalytics)
+library(sjPlot)
+library(sjmisc)
+library(ggplot2)
+```
+#1. Data overview
+#we are usisng the following data for our analysis
+https://www.kaggle.com/datasets/yasserh/loan-default-dataset
+Banks earn a major revenue from lending loans. But it is often associated with risk. The borrower's may default on the loan. To mitigate this issue, the banks have decided to use Machine Learning to overcome this issue. They have collected past data on the loan borrowers & would like you to develop a strong ML Model to classify if any new borrower is likely to default or not.
+
+The dataset is enormous & consists of multiple deteministic factors like borrowe's income, gender, loan pupose etc. The dataset is subject to strong multicollinearity & empty values. 
+
+```{r}
+df <- read.csv("Loan_default.csv")
+str(df)
+```
+#Based on the data provider here are the description of the columns
+
+ID = Customer ID of Applicant
+year = Year of Application
+loan limit = maximum avaliable amount of the loan allowed to be taken
+Gender = sex type
+approv_in_adv = Is loan pre-approved or not
+loan_type = Type of loan
+loan_purpose = the reason you want to borrow money
+Credit_Worthiness = is how a lender determines that you will default on your debt obligations, or how worthy you are to receive new credit.
+open_credit = is a pre-approved loan between a lender and a borrower. It allows the borrower to make repeated withdrawals up to a certain limit.
+business_or_commercial = Usage type of the loan amount
+loan_amount = The exact loan amount
+rate_of_interest = is the amount a lender charges a borrower and is a percentage of the principal—the amount loaned.
+Interest_rate_spread = the difference between the interest rate a financial institution pays to depositors and the interest rate it receives from loans
+Upfront_charges = Fee paid to a lender by a borrower as consideration for making a new loan
+term = the loan's repayment period
+Neg_ammortization = refers to a situation when a loan borrower makes a payment less than the standard installment set by the bank.
+interest_only = amount of interest only without principles
+lump_sum_payment = is an amount of money that is paid in one single payment rather than in installments.
+property_value = the present worth of future benefits arising from the ownership of the property
+construction_type = Collateral construction type
+occupancy_type = classifications refer to categorizing structures based on their usage
+Secured_by = Type of Collatoral
+total_units = number of unites
+income = refers to the amount of money, property, and other transfers of value received over a set period of time
+credit_type = type of credit
+co-applicant_credit_type = is an additional person involved in the loan application process. Both applicant and co-applicant apply and sign for the loan
+age = applicant's age
+submission_of_application = Ensure the application is complete or not
+LTV = life-time value (LTV) is a prognostication of the net profit
+Region = applicant's place
+Security_Type = Type of Collatoral
+status = Loan status (Approved/Declined)
+dtir1 = debt-to-income ratio
+
+#Based on our investigation 7 Factors Lenders Look at When Considering Loan Application
+1. credit score. ...
+2. income and employment history. ...
+3. debt-to-income ratio. ...
+4. Value of your collateral. ...
+5. Size of down payment. ...
+6. Liquid assets. ...
+7. Loan term.
+
+We should use the following variables
+as our explanatory variable 
+'loan_type', 'loan_amount', 'rate_of_interest', 'term',
+       'property_value', 'income', 'Credit_Score', 'age', 'dtir1'
+      
+and Status as our predictor
+
+#lets create smaller df with the variables of our intrest
+
+```{r}
+df_reduced <- df[,c('Status', 'loan_type', 'loan_amount', 'rate_of_interest', 'term','property_value', 'income', 'Credit_Score', 'age', 'dtir1')]
+summary(df_reduced)
+```
+#2. Data Cleanup
+#lets find missing values for the variables of our interest
+
+```{r}
+missing <-sapply(df_reduced, function(y) sum(length(which(is.na(y)))))
+missing <- data.frame(missing)
+missing
+```
+#lets impute the misisng values based on other variables
+impute property_value based on loan_amount and loan_type
+impute term based on loan_amount and loan_type
+impute rate_of_interest based on loan_amount, loan_type, Term
+impute income based on Age
+impute dtir1 based property_value, loan_amount and loan_type
+
+Since we have dependent variables missing, lets find how many rows we have where all the dependent variables are null
+
+```{r}
+x <- df_reduced[(is.na(df_reduced$property_value) &
+               is.na(df_reduced$term) 
+               ), ]
+
+
+str(x)
+```
+Since there are 12 rows only where dependat variables are missing, lets remove those 12 variables
+
+```{r}
+df_reduced <- df_reduced[!(is.na(df_reduced$property_value) &
+               is.na(df_reduced$term) 
+               ), ]
+
+
+str(df_reduced)
+```
+#lets rexamine missing values for the variables of our interest
+
+```{r}
+missing <-sapply(df_reduced, function(y) sum(length(which(is.na(y)))))
+missing <- data.frame(missing)
+missing
+```
+#lets impute the values for missing variables
+#lets impute the misisng values based on other variables
+impute property_value based on loan_amount and loan_type
+impute term based on loan_amount and loan_type
+impute rate_of_interest based on loan_amount, loan_type, Term
+impute income based on Age
+impute dtir1 based property_value, loan_amount and loan_type
+
+#lets see missing patterns
+```{r}
+md.pattern(df_reduced)
+```
+
+```{r}
+#lets use mice library to do our imputation
+library(mice)
+init <- mice(df_reduced, meth="mean", maxit=0)
+
+#the variables we will use for imputation
+init$predictorMatrix[, c("loan_amount", "loan_type")]=0
+imputation <- mice(df_reduced, method=init$method, 
+                            predictorMatrix=init$predictorMatrix, 
+                            maxit=5,
+                            m = 5,
+                            seed=123)
+```
+```{r}
+summary(imputation)
+```
+#lets exmapme imputed data
+```{r}
+imputation$imp$term
+head(imputation$imp$rate_of_interest)
+```
+#based on the imputed data it loosk like all of the imputaion methods prodcued same data
+#so lets use the data from 1st imputation method
+```{r}
+df_imputed <- complete(imputation,1)
+```
+#lets examine the imputed data
+```{r}
+md.pattern(df_imputed)
+```
+
+#lets remove the outliers
+```{r}
+summary(df_imputed)
+```
+
+```{r}
+#install.packages("Hmisc")
+library(Hmisc)
+hist.data.frame(df_imputed)
+```
+#we can see that the follwing variables have outliers
+#loan_amount, property_value, income
+# we will use the formula Q3 + (1.5*IQR) to remove outlier observations
+```{r}
+#income
+outliers <- boxplot(df_imputed$income, plot=FALSE)$out
+df_imputed<- df_imputed[-which(df_imputed$income %in% outliers),]
+
+#loan_amount
+outliers <- boxplot(df_imputed$loan_amount, plot=FALSE)$out
+df_imputed<- df_imputed[-which(df_imputed$loan_amount %in% outliers),]
+
+#property_value
+outliers <- boxplot(df_imputed$property_value, plot=FALSE)$out
+df_imputed<- df_imputed[-which(df_imputed$property_value %in% outliers),]
+
+hist.data.frame(df_imputed)
+
+```
+```{r}
+summary(df_imputed)
+```
+
+```{r}
+qqnorm(df_imputed$rate_of_interest)
+
+qqnorm(df_imputed$Credit_Score)
+
+qqnorm(df_imputed$dtir1)
+
+qqnorm(df_imputed$loan_amount )
+
+qqnorm(df_imputed$ property_value)
+```
+
+##Create co-relation plots of our data
+#lets factorize the categorical data
+
+```{r}
+df_imputed$loan_type <- factor(df_imputed$loan_type)
+df_imputed$age <- factor(df_imputed$age)
+summary(df_imputed)
+```
+
+#lets do a glm on the data before cleanup to identify if it works
+```{r}
+model <- glm(Status ~ loan_type+loan_amount+rate_of_interest+term+property_value+income+Credit_Score+age+dtir1, family = "binomial"(link="logit"), data = df_imputed)
+summary(model)
+```
+# With the given variables above, the data are classified as follows: 
+VARIABLE	CATEGORY	SCALE OF MEASUREMENT
+Status	Categorical	Nominal
+Loan_type	Categorical	Nominal
+Loan_Amount	Numerical	Continuous
+Rate_of_interest	Numerical	Continuous
+Term	Numerical	Discrete
+Property_value	Numerical	Continuous
+Income	Numerical	Continuous
+Credit_Score	Numerical	Continuous
+Age	Categorical	Ordinal
+Dtir1 (Debt to Income Ratio)	Numerical	Continuous
+
+#These variables are then checked for association. Categorical variables underwent a chi-square test of independence to 
+#check if these are significantly associated or not. The following hypotheses were developed: 
+
+Null Hypothesis (Ho) - The variables are not related to the population.
+Alternative Hypothesis (Ha) - The variables are related to the population. 
+# Here are the results of the chi-square test:
+```{r}
+# For Status and Loan Type
+Cat1 = table(df_imputed$Status, df_imputed$loan_type)
+Cat1
+chisq.test(df_imputed$Status, df_imputed$loan_type,correct=FALSE)
+
+# For Status and Age
+Cat2 = table(df_imputed$Status, df_imputed$age)
+Cat2
+chisq.test(df_imputed$Status, df_imputed$age,correct=FALSE)
+```
+# Based on the p-values, we can conclude that status and loan type, as well as age are related 
+and there is a proven association. 
+
+For numerical variables, we are doing a two sample t-test, as status only has 2 categories (Approved or Declined). However, there are 
+certain assumptions to be met: 
+1. The data should be continuous
+2. The data should follow a normal bell-shaped curve visually (NOTE: I am not sure if this is relevant since there is also an automatic assumption of normality from Measures of Central Tendency should the data be large)
+3. The data must come from a random sample
+4. The variances for the 2 groups are equal 
+5. There should be a sizable amount of data
+
+# These are the variables with Normal Distribution 
+(this is not important)
+```{r}
+hist(df_imputed$rate_of_interest)
+qqnorm(df_imputed$rate_of_interest)
+
+hist(df_imputed$Credit_Score)
+qqnorm(df_imputed$Credit_Score)
+
+hist(df_imputed$dtir1)
+qqnorm(df_imputed$dtir1)
+```
+# For those variables that followed a visually normal distribution, a test was done to check whether the 
+# variances are equal or not. Here are the results assuming a level of significance = 0.05: 
+```{r}
+imputed_data <- df_imputed
+# For status and rate of interest
+var.test(imputed_data$Status,imputed_data$rate_of_interest, alternative="two.sided",conf.level=0.95)
+# The test above states that variances are not equal - so we conduct a t-test assuming unequal variances
+t.test(imputed_data$Status,imputed_data$rate_of_interest, alternative="two.sided", var.equal = FALSE,conf.level = 0.95)
+
+# For status and debt to income ratio
+var.test(imputed_data$Status,imputed_data$dtir1, alternative="two.sided",conf.level=0.95)
+# The test above states that variances are not equal - so we conduct a t-test assuming unequal variances
+t.test(imputed_data$Status,imputed_data$dtir1, alternative="two.sided", var.equal = FALSE,conf.level = 0.95)
+
+# For status and Credit
+var.test(imputed_data$Status,imputed_data$Credit, alternative="two.sided",conf.level=0.95)
+# The test above states that variances are not equal - so we conduct a t-test assuming unequal variances
+t.test(imputed_data$Status,imputed_data$Credit, alternative="two.sided", var.equal = FALSE,conf.level = 0.95)
+
+```
+# Basing on the above t-tests, we can reject Ho and prove that there is association between the numerical variables above and loan status. 
+# These are the numerical variables which do not follow a normal distribution. Skewness is also added for transformation purposes, as necessary. 
+
+```{r}
+library(ggpubr)
+library(moments)
+
+# imputed_data$loan_amount
+x <- imputed_data$loan_amount
+x2 <- seq(min(x), max(x), length = 40)
+# Normal curve
+fun <- dnorm(x2, mean = mean(x), sd = sd(x))
+# Histogram
+hist(x, prob = TRUE, col = "white",
+     ylim = c(0, max(fun)),
+     main = "loan_amount")
+lines(x2, fun, col = 2, lwd = 2)
+skewness(imputed_data$loan_amount, na.rm = TRUE)
+
+
+# imputed_data$term
+x <- imputed_data$term
+x2 <- seq(min(x), max(x), length = 40)
+# Normal curve
+fun <- dnorm(x2, mean = mean(x), sd = sd(x))
+# Histogram
+hist(x, prob = TRUE, col = "white",
+     ylim = c(0, max(fun)),
+     main = "term")
+lines(x2, fun, col = 2, lwd = 2)
+skewness(imputed_data$term, na.rm = TRUE)
+
+# imputed_data$property_value
+x <- imputed_data$property_value
+x2 <- seq(min(x), max(x), length = 100)
+# Normal curve
+fun <- dnorm(x2, mean = mean(x), sd = sd(x))
+# Histogram
+hist(x, prob = TRUE, col = "white",
+     ylim = c(0, max(fun)),
+     main = "property_value")
+lines(x2, fun, col = 2, lwd = 2)
+skewness(imputed_data$property_value, na.rm = TRUE)
+
+# imputed_data$property_value
+x <- imputed_data$income
+x2 <- seq(min(x), max(x), length = 40)
+# Normal curve
+fun <- dnorm(x2, mean = mean(x), sd = sd(x))
+# Histogram
+hist(x, prob = TRUE, col = "white",
+     ylim = c(0, max(fun)),
+     main = "income")
+lines(x2, fun, col = 2, lwd = 2)
+skewness(imputed_data$income, na.rm = TRUE)
+
+```
+
+# Furthermore, a Kolmogorov-Smirnov Test was done with the following hypothesis:
+Null Hypothesis (Ho) - Data is normally distributed
+Alternative Hypothesis (Ha) - Data is not normally distributed
+
+Here are the results:
+```{r}
+# Status and Loan Amount
+ks.test(imputed_data$loan_amount, 'pnorm') # Not normal distribution (make this log)
+ks.test(imputed_data$term, 'pnorm') # Not normal distribution (make this log)
+ks.test(imputed_data$property_value,  'pnorm') # Not normal distribution (make this log)
+ks.test(imputed_data$income,  'pnorm') # Not normal distribution (make this log)
+
+```
+
+# Running the GLM Model without interactions 
+
+# Checking for Multicollinearity
+```{r}
+library(car)
+library(olsrr)
+
+model <- glm(Status ~ loan_type+rate_of_interest+term+income+Credit_Score+age+dtir1+loan_amount+property_value, family = "binomial"(link="logit"), data = imputed_data)
+summary(model)
+
+car::vif(model)
+
+# Visualization
+#install.packages("corrplot")
+library(corrplot)
+vif_values <- vif(model)           #create vector of VIF values
+#barplot(vif_values, main = "VIF Values", horiz = TRUE, col = "steelblue") #create horizontal bar chart to display each VIF value
+#abline(v = 5, lwd = 3, lty = 2)    #add vertical line at 5 as after 5 there is severe correlation
+
+# Basing on the results, it looks like our model does not have any severe multicollinearity, as the baseline is usually 4 above. 
+```
+```{r}
+d <- data.frame(vif_values)
+d
+barplot(d[,3], main = "VIF Values", col = "steelblue", names=row.names(d),las=2,horiz=TRUE) #create 
+```
+```{r}
+#install.packages("bestglm")
+library(bestglm)
+vifx(vif_values)
+```
+
+
+
+##andrew's code
+
+### Step 1. Splitting the dataset into train and test dataset
+```{r}
+sample <- sample.int(n = nrow(imputed_data), size = floor(.8*nrow(imputed_data)), replace = F) #80% of dataset 
+
+train <- imputed_data[sample, ]
+test <- imputed_data[-sample, ]
+summary(train)
+```
+
+##create a model with all the variables
+```{r}
+model_intial = glm(Status ~ loan_type+loan_amount+rate_of_interest+term+property_value+income+Credit_Score+age+dtir1, family = "binomial"(link="logit"), data = train)
+summary(model_intial)
+
+```
+#model with varaibles of significance from previous model
+```{r}
+options(scipen=9)
+model_sig = glm(Status ~ loan_type+loan_amount+rate_of_interest+term+property_value+income+dtir1, family = "binomial"(link="logit"), data = train)
+summary(model_sig)
+```
+#lets find variables that are interacting
+```{r}
+model_findi = glm(Status ~ (loan_type+loan_amount+rate_of_interest+term+property_value+income)^2, family = "binomial"(link="logit"), data = train)
+summary(model_findi)
+anova(model_findi, test='Chisq')
+```
+
+Based on the ANOVA test conducted above, the following interactions were deemed significant based on their deviances (>10), as well as p-values(<0.05): 
+
+loan_type:rate_of_interest       2  1874.67    107831     115980 < 2.2e-16 ***
+loan_type:property_value         2  1859.09    107827     114066 < 2.2e-16 ***
+rate_of_interest:term            1  2745.61    107820     108094 < 2.2e-16 ***
+
+For our model testing we will use 
+loan_type:income                 2   244.10    108074     114331 < 2.2e-16 ***
+```{r}
+#install.packages("dotwhisker")
+library(dotwhisker)
+dwplot(model_findi,ci_method="wald")+geom_vline(xintercept=0,lty=2)
+```
+
+---
+```{r}
+summary(train)
+
+```
+```{r}
+unique(train$loan_type)
+as.numeric(as.factor(unique(train$loan_type)))
+```
+
+#intercation plots
+```{r}
+library(sjPlot)
+fit <- glm(Status ~ loan_amount:property_value, data = train,family = binomial)
+plot_model(fit, type = "int",mdrt.values = "meansd",title="Interaction for loan_amount:property_value")
+```
+```{r}
+fit <- glm(Status ~ rate_of_interest:term , data = train,family = binomial)
+plot_model(fit, type = "int",mdrt.values = "meansd",title="Interaction for rate_of_interest:term")
+
+```
+```{r}
+fit <- glm(Status ~ term:rate_of_interest , data = train,family = binomial)
+plot_model(fit, type = "int",mdrt.values = "meansd",title="Interaction for rate_of_interest:term ")
+summary(fit)
+```
+```{r}
+x <- train
+x$loan_type <- as.numeric(as.factor(x$loan_type))
+fit <- glm(Status ~ income:loan_type , data = x,family = "binomial"(link="logit"))
+summary(fit)
+plot_model(fit, type = "int",mdrt.values = "meansd",title="Interaction for income:loan_type ")
+
+```
+```{r}
+fit <- glm(Status ~ loan_type:rate_of_interest , data = x,family = "binomial"(link="logit"))
+summary(fit)
+plot_model(fit, type = "int",mdrt.values = "meansd",title="Interaction for income:loan_type ")
+
+fit <- glm(Status ~ loan_type:property_value , data = x,family = "binomial"(link="logit"))
+summary(fit)
+plot_model(fit, type = "int",mdrt.values = "meansd",title="Interaction for loan_type:property_value ")
+
+
+```
+
+#intercation model
+```{r}
+model_interactive = glm(Status ~ loan_type+loan_amount+rate_of_interest+term+property_value+income+income:loan_type, family = "binomial"(link="logit"), data = train)
+summary(model_interactive)
+```
+
+### Step 2. Comparing the interaction model and non-interaction model
+
+Residual Deviance, F-test, which one is more fit?
+Non-Interactive Model: Residual deviance: 130653  on 118919  degrees of freedom
+Interactive Model: Residual deviance: 129660  on 118917  degrees of freedom
+AIC: 129678
+
+```{r}
+
+pchisq((130653 - 129660), (118919-118917), lower.tail=FALSE)
+
+# the p-value is approximately 0. This suggests that the reduced model is appropriate
+
+```
+#lrest
+```{r}
+library(lmtest)
+lrtest(model_sig,model_interactive)
+```
+
+### Step 4. Model Evaluation Using ROC Curves
+
+### Classification report
+#model withh alll variables: model_intial
+#model withh all significnat variabless: model_sig
+#model with interactive variables:model_interactive
+
+```{r}
+#test the model with all significant variables against test data
+test$non_interactive_fitted <- predict(model_sig, test)
+
+test$non_interactive_prob <- exp(test$non_interactive_fitted)/(1+exp(test$non_interactive_fitted))
+
+# The Classification report: Sensitivity, Specificity and Accuracy
+prob_cut_off = sum(test$Status)/nrow(test)
+
+test$non_interactive_predict <- as.numeric(test$non_interactive_prob > prob_cut_off)
+
+# 2. The interactive model: Only keeping interaction terms
+test$interactive_fitted <- predict(model_interactive, test)
+
+test$interactive_prob <- exp(test$interactive_fitted)/(1+exp(test$interactive_fitted))
+
+test$interactive_predict <- as.numeric(test$interactive_prob > prob_cut_off)
+
+
+```
+```{r}
+library(caret)
+
+#test the model with all significant variables against test data
+threshold=prob_cut_off
+predicted_values<-ifelse(predict(model_sig, test)>threshold,1,0)
+actual_values<-test$Status
+conf_matrix<-table(predicted_values,actual_values)
+conf_matrix
+cat("\nsensitivity:",sensitivity(conf_matrix))
+#posPredValue(conf_matrix)
+cat("\nposPredValue:",posPredValue(conf_matrix))
+#specificity(conf_matrix)
+cat("\nspecificity:",specificity(conf_matrix))
+cat("\nnegPredValue:",negPredValue(conf_matrix))
+cat("\nMisclassifcation :",(conf_matrix[2,1]+conf_matrix[1,2])/sum(conf_matrix))
+
+```
+```{r}
+#test the interaction model  against test data
+threshold=prob_cut_off
+predicted_values<-ifelse(predict(model_interactive, test)>threshold,1,0)
+actual_values<-test$Status
+conf_matrix<-table(predicted_values,actual_values)
+conf_matrix
+cat("\nsensitivity:",sensitivity(conf_matrix))
+#posPredValue(conf_matrix)
+cat("\nposPredValue:",posPredValue(conf_matrix))
+#specificity(conf_matrix)
+cat("\nspecificity:",specificity(conf_matrix))
+cat("\nnegPredValue:",negPredValue(conf_matrix))
+cat("\nMisclassifcation :",(conf_matrix[2,1]+conf_matrix[1,2])/sum(conf_matrix))
+```
+
+```{r}
+#just evaluating our full model
+threshold=0.5
+predicted_values<-ifelse(predict(model_sig,type="response")>threshold,1,0)
+actual_values<-model_sig$y
+conf_matrix<-table(predicted_values,actual_values)
+conf_matrix
+```
+
+```{r}
+library(pROC)
+par(pty = "s")
+
+roc(test$Status, test$non_interactive_prob, plot=TRUE, legacy.axes=TRUE, percent=TRUE, xlab="False Positive Percentage", ylab="True Postive Percentage", col="red", lwd=4, print.auc=TRUE)
+
+plot.roc(test$Status, test$interactive_prob, percent=TRUE, col="blue", lwd=4, print.auc=TRUE, add=TRUE, print.auc.y=40)
+
+legend("bottomright", legend=c("Interaction", "Non-Interaction"),
+       col=c("red", "blue"), lwd=1, y.intersp = 0.5,
+       lty = c(2,1),cex=1, bty ='n',pt.cex = 2)
+
+```
+```{r}
+#install.packages("ROCR")
+
+library(ROCR)
+p1 <- predict(model_sig, test)
+pred <- prediction(p1, test$Status )
+perf <- performance( pred, "tpr", "fpr" )
+
+p2 <- predict(model_interactive, test)
+pred2 <- prediction(p2, test$Status)
+perf2 <- performance(pred2, "tpr", "fpr")
+
+plot( perf, colorize = TRUE)
+plot(perf2, add = TRUE, colorize = FALSE)
+
+```
+```{r}
+predicted_prob<-predict(model_interactive, test)
+roccurve <- roc(test$Status, predicted_prob)
+
+predicted_prob1<-predict(model_sig, test)
+roccurve1 <- roc(test$Status, predicted_prob1)
+
+roc(test$Status, predicted_prob, plot=TRUE, legacy.axes=TRUE, percent=TRUE, xlab="False Positive Percentage", ylab="True Postive Percentage", col="red", lwd=4, print.auc=TRUE)
+
+plot.roc(test$Status, predicted_prob1, percent=TRUE, col="blue", lwd=4, print.auc=TRUE, add=TRUE, print.auc.y=40)
+
+#plot(roccurve1)
+```
+
+
+
+### The Hosmer-Lemshow test
+
+```{r}
+library(generalhoslem)
+logitgof(test$Status, test$non_interactive_prob)
+logitgof(test$Status, test$interactive_prob)
+
+# There is evidence the model is fitting badly
+
+library(ResourceSelection)
+hoslem.test(test$Status, test$non_interactive_prob, g=10)
+hoslem.test(test$Status, test$interactive_prob, g=10)
+```
+```{r}
+# 1. The non-interactive model
+
+train$non_interactive_fitted <- predict(model_sig, train)
+
+train$non_interactive_prob <- exp(train$non_interactive_fitted)/(1+exp(train$non_interactive_fitted))
+
+roc(train$Status, train$non_interactive_prob, plot=TRUE, legacy.axes=TRUE, percent=TRUE, xlab="False Positive Percentage", ylab="True Postive Percentage", col="red", lwd=4, print.auc=TRUE)
+
+logitgof(train$Status, train$non_interactive_prob)
+
+
+
+```
+
